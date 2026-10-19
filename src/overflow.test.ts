@@ -295,6 +295,57 @@ describe("context overflow", () => {
     expect(hits).toBe(1);
   });
 
+  it("does not offer a routing whose every model is too small when another routing fits", async () => {
+    const offered: string[][] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      const body = JSON.parse((init.body as string) ?? "{}") as {
+        questions?: { model?: { criteria?: Record<string, unknown> } };
+      };
+      offered.push(Object.keys(body.questions?.model?.criteria ?? {}));
+      // Jev asks for "chat" (a short question), the routing that only holds the tiny model.
+      const answers = {
+        model: { choice: "chat", confidence: 0.9 },
+        effort: { choice: "low", confidence: 0.9 },
+      };
+      return new Response(JSON.stringify({ model: "jev", answers }), { status: 200 });
+    });
+    const twoSizes = parseConfig({
+      defaultProvider: "sub",
+      providers: [
+        {
+          name: "sub",
+          type: "openai",
+          baseUrl: "http://127.0.0.1:1/v1",
+          apiKey: "test",
+          models: ["tiny-model", "big-model"],
+        },
+      ],
+      routing: {
+        mode: "auto",
+        tiers: { chat: ["tiny-model"], plan: ["big-model"] },
+        brains: [{ channel: "typesafe", apiKeyEnv: "TYPESAFE_API_KEY" }],
+        capacities: {
+          "tiny-model": { contextWindow: 2_000 },
+          "big-model": { contextWindow: 1_000_000 },
+        },
+      },
+    });
+
+    const { decideRoute } = await import("./routing");
+    const decision = await decideRoute({
+      config: twoSizes,
+      body: longBody(),
+      headers: {},
+      store: new SessionStore(60_000),
+      kind: "openai",
+      now: 1_000,
+    });
+    if ("error" in decision) throw new Error(decision.error);
+    expect(offered[0]).not.toContain("chat");
+    expect(decision.model).toBe("big-model");
+    expect(decision.contextOverflow).toBeFalsy();
+  });
+
   it("flags the overflow and compacts the history before routing again", async () => {
     const seen: Array<{ keys: string[]; messageCount: number }> = [];
     vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
