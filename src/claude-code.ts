@@ -337,35 +337,53 @@ export function restoreClaudeCode(): ClaudeCodeStatus {
 }
 
 /**
- * `--settings` that turn on the Jevo status line for a launched session, or nothing.
+ * `--settings` for a launched session: Jevo's env, plus the Jevo status line.
+ *
+ * The env goes here, not only into the child's environment, because Claude Code lets the `env`
+ * block of `~/.claude/settings.json` override the process environment. Another router writing
+ * its own `ANTHROPIC_BASE_URL` there would otherwise silently take over `launch claude`.
+ * Command-line settings outrank user settings, and they apply to this session only.
  *
  * Claude Code's UI shows the model it asked for (`jevonian/auto`), never the one Jev routed
  * the turn to; the status line (`jevonian statusline`) is what makes each decision visible.
- * `--settings` merges into the session only, so nothing is written to the user's settings.
  * A status line the user configured themselves wins, and `JEVO_NO_STATUSLINE=1` opts out.
  */
-export function statusLineSettingsArgs(cwd = process.cwd()): string[] {
-  if (process.env.JEVO_NO_STATUSLINE) return [];
+export function launchSettingsArgs(env: Record<string, string>, cwd = process.cwd()): string[] {
+  const settings: Record<string, unknown> = { env };
   const configured = [
     join(cwd, ".claude", "settings.json"),
     join(cwd, ".claude", "settings.local.json"),
     claudeCodeSettingsPath(),
   ].some((path) => readJson(path).statusLine !== undefined);
-  if (configured) return [];
-  let cli: string;
+  let cli: string | undefined;
   try {
     cli = realpathSync(process.argv[1] ?? "");
   } catch {
-    return [];
+    // No resolvable CLI path: launch without the status line and skill hook rather than fail.
   }
-  const file = join(dataDir(), "claude-statusline.json");
-  try {
-    mkdirSync(dirname(file), { recursive: true });
-    const command = `"${process.execPath}" "${cli}" statusline`;
-    writeFileSync(file, `${JSON.stringify({ statusLine: { type: "command", command } })}\n`);
-  } catch {
-    return [];
+  if (cli && !process.env.JEVO_NO_STATUSLINE && !configured) {
+    settings.statusLine = { type: "command", command: `"${process.execPath}" "${cli}" statusline` };
   }
+  // jev-skill-router (`jevonian skillroute`): Jev names the installed skill that fits the
+  // prompt, one line in the turn's context. Separate from model routing; JEVO_SKILL_ROUTER=off.
+  if (cli && process.env.JEVO_SKILL_ROUTER !== "off") {
+    settings.hooks = {
+      UserPromptSubmit: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: `"${process.execPath}" "${cli}" skillroute`,
+              timeout: 8,
+            },
+          ],
+        },
+      ],
+    };
+  }
+  const file = join(dataDir(), "claude-launch-settings.json");
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(settings)}\n`, { mode: 0o600 });
   return ["--settings", file];
 }
 
@@ -383,15 +401,19 @@ export async function launchClaudeCode(options: ClaudeCodeLaunchOptions): Promis
 
   const { primary } = resolveClaudeCodeModels(options.models, options.model);
   const passModel = Boolean(options.model?.trim() || options.models[0]);
+  const jevoEnv = {
+    ...claudeCodeEnv({ port: options.port, models: options.models, model: options.model }),
+    // Claude Code turns tool search off behind a non-Anthropic base URL, so every MCP tool
+    // definition rides along on every turn (hundreds of thousands of tokens with a few MCP
+    // servers). That alone rules out small models and slows every reply. A shell value wins.
+    ENABLE_TOOL_SEARCH: process.env.ENABLE_TOOL_SEARCH ?? "true",
+  };
   const args = [
     ...(passModel ? ["--model", primary] : []),
-    ...statusLineSettingsArgs(),
+    ...launchSettingsArgs(jevoEnv),
     ...(options.args ?? []),
   ];
-  const env = {
-    ...process.env,
-    ...claudeCodeEnv({ port: options.port, models: options.models, model: options.model }),
-  };
+  const env = { ...process.env, ...jevoEnv };
 
   return await new Promise<number>((resolve, reject) => {
     const child = spawn(claudePath, args, {

@@ -828,10 +828,12 @@ export function tierEntryCandidates(config: Config, model: string, kind?: Reques
     (provider) =>
       providerHasModel(provider, model) && (kind === undefined || canServeClient(provider, kind)),
   );
+  // A provider that cannot speak the client's wire only ever yields a 400 before the upstream
+  // call ("speaks responses, not anthropic"), so it is never a candidate once the wire is known.
   const exact =
-    preferred.length > 0
-      ? preferred
-      : config.providers.filter((provider) => providerHasModel(provider, model));
+    kind === undefined
+      ? config.providers.filter((provider) => providerHasModel(provider, model))
+      : preferred;
   for (const provider of exact) add(provider.name, model);
 
   // Exact spelling is not the whole catalog: OpenRouter may list the same model as
@@ -1425,6 +1427,8 @@ export async function decideRoute(
     candidates: CapableCandidate[];
     offeredToBrain: CacheCandidateView[];
     skipped: RouteSkip[];
+    /** At least one model can hold the conversation (effort skips do not count against it). */
+    fitsContext: boolean;
   };
 
   const allSkipped: RouteSkip[] = [];
@@ -1451,6 +1455,7 @@ export async function decideRoute(
       candidates: offered,
       offeredToBrain,
       skipped,
+      fitsContext: usable.length > 0 || !skipped.some((entry) => entry.reason === "context"),
     });
   };
 
@@ -1478,6 +1483,14 @@ export async function decideRoute(
     };
   }
 
+  // A routing whose every model is too small must not be offered while another routing fits:
+  // Jev picks by task ("chat" for "hi"), and the turn would then go to a model that rejects it.
+  if (offers.some((offer) => offer.fitsContext)) {
+    for (let i = offers.length - 1; i >= 0; i--) {
+      if (!offers[i]!.fitsContext) offers.splice(i, 1);
+    }
+  }
+
   // The same model can sit in several routings; collapse skip notes so headers stay readable.
   const skippedSeen = new Set<string>();
   const skipped: RouteSkip[] = [];
@@ -1488,10 +1501,10 @@ export async function decideRoute(
     skipped.push(entry);
   }
 
+  // Only when no routing has a model that fits; a skipped fallback beside a fitting model is fine.
   const contextOverflow =
     offers.every((offer) => offer.candidates.length === 0) ||
-    (allSkipped.some((entry) => entry.reason === "context") &&
-      offers.every((offer) => offer.skipped.some((entry) => entry.reason === "context")));
+    offers.every((offer) => !offer.fitsContext);
 
   // Attach switch penalties relative to the previous turn's model, when it still appears.
   const flatOffered: CacheCandidateView[] = [];

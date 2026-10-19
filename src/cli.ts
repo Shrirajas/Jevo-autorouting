@@ -54,6 +54,7 @@ import {
   stopService,
   uninstallService,
 } from "./service";
+import { skillRouteCommand } from "./skillroute";
 import { statusLineCommand } from "./statusline";
 import { TunnelManager } from "./tunnel";
 import { formatUpdateNotice, isNewerVersion, UPDATE_INTERVAL_MS, UpdateManager } from "./updates";
@@ -1060,6 +1061,9 @@ async function main(): Promise<void> {
   } else if (command === "statusline") {
     // Claude Code's status line for `launch claude`; reads the session JSON on stdin.
     await statusLineCommand();
+  } else if (command === "skillroute") {
+    // Claude Code's UserPromptSubmit hook for `launch claude`: jev-skill-router, fail-open.
+    await skillRouteCommand();
   } else if (command === "launch") {
     await launchCommand(process.argv.slice(3));
   } else if (command === "serve") {

@@ -24,6 +24,7 @@
   "files": [
     "dist",
     "docs",
+    "vendor",
     "LICENSE",
     "NOTICE",
     "README.md",

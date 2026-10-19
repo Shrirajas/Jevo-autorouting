@@ -16,6 +16,7 @@ import {
   lastUserMessage,
   routingCandidates,
   SessionStore,
+  tierEntryCandidates,
   type RequestKind as RouteKind,
   type RouteDecision,
   type RouteInput,
@@ -1513,5 +1514,34 @@ describe("cache-aware routing", () => {
     store.observeCache("s", { ...observation, success: false, at: 102 });
     expect(store.get("s", 103)?.cache).toEqual(observation);
     expect(store.get("s", 60_101)).toBeUndefined();
+  });
+});
+
+describe("tierEntryCandidates wire compatibility", () => {
+  const config = parseConfig({
+    defaultProvider: "openai",
+    providers: [
+      {
+        name: "openai",
+        type: "responses",
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "test",
+        models: ["gpt-5.4-mini"],
+      },
+    ],
+  });
+
+  it("never offers a provider that cannot speak the client's wire", () => {
+    // A Responses-only provider answers an Anthropic client with a 400 before any upstream call.
+    expect(tierEntryCandidates(config, "gpt-5.4-mini", "anthropic")).toEqual([]);
+  });
+
+  it("still offers it to clients it can serve, and when the wire is unknown", () => {
+    expect(tierEntryCandidates(config, "gpt-5.4-mini", "openai")).toEqual([
+      { provider: "openai", model: "gpt-5.4-mini" },
+    ]);
+    expect(tierEntryCandidates(config, "gpt-5.4-mini")).toEqual([
+      { provider: "openai", model: "gpt-5.4-mini" },
+    ]);
   });
 });

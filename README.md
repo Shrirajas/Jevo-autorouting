@@ -4,6 +4,8 @@
 
 ### The right model for every turn. One local endpoint.
 
+> **New machine?** Follow [SETUP.md](SETUP.md): install, ports, keys, `jevo-claude`, and troubleshooting, written so Claude Code can follow it step by step.
+
 Keep the coding agent you already use. Jevo sits between your agent and your providers, chooses a capable model for each turn, respects quota and cache economics, and records the decision locally. No manual model switching between planning, implementation, and smaller tasks.
 
 **[Get started](#quickstart) · [Connect an agent](#connect-your-agent) · [See how routing works](#how-it-works)**

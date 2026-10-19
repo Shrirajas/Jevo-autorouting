@@ -9,6 +9,7 @@ import {
   claudeCodeEnv,
   claudeCodeModelLabel,
   claudeCodeSettingsPath,
+  launchSettingsArgs,
   resolveClaudeCodeModels,
   restoreClaudeCode,
 } from "./claude-code";
@@ -68,6 +69,36 @@ describe("Claude Code settings connect", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
+  });
+
+  it("puts Jevo's env in the launch --settings so a user settings.json env cannot override it", () => {
+    // Another router wrote its own base URL into the user's settings, which outrank the shell env.
+    writeFileSync(
+      claudeCodeSettingsPath(),
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:8789/w/claude" } }),
+    );
+    const env = claudeCodeEnv({ port: 8787, models: ["jevonian/auto"] });
+    const args = launchSettingsArgs({ ...env, ENABLE_TOOL_SEARCH: "true" }, home);
+    expect(args[0]).toBe("--settings");
+    const written = JSON.parse(readFileSync(args[1]!, "utf8")) as {
+      env: Record<string, string>;
+      statusLine?: unknown;
+    };
+    expect(written.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8787");
+    expect(written.env.ANTHROPIC_AUTH_TOKEN).toBe("jevonian-local");
+    expect(written.env.ENABLE_TOOL_SEARCH).toBe("true");
+  });
+
+  it("adds the skill-router hook to the launch settings unless JEVO_SKILL_ROUTER=off", () => {
+    const hookCommand = (args: string[]) => {
+      const written = JSON.parse(readFileSync(args[1]!, "utf8")) as {
+        hooks?: { UserPromptSubmit?: Array<{ hooks: Array<{ command: string }> }> };
+      };
+      return written.hooks?.UserPromptSubmit?.[0]?.hooks[0]?.command;
+    };
+    expect(hookCommand(launchSettingsArgs({}, home))).toMatch(/" skillroute$/);
+    vi.stubEnv("JEVO_SKILL_ROUTER", "off");
+    expect(hookCommand(launchSettingsArgs({}, home))).toBeUndefined();
   });
 
   it("writes managed env into settings.json and restores prior content", () => {
